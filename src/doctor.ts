@@ -15,7 +15,7 @@
 
 import { Historian, Sample } from "./historian";
 import { errorRad } from "./kpis";
-import { PypilotClient } from "./pypilot-client";
+import { PilotLink } from "./pilot-link";
 import { SERVO_ON_MIN_A } from "./constants";
 import { EpisodeDetector } from "./episodes";
 
@@ -111,7 +111,7 @@ export class DoctorEngine {
   private result: DoctorResult | null = null;
   private timer: NodeJS.Timeout | null = null;
   private readonly historian: Historian;
-  private client: PypilotClient | null;
+  private client: PilotLink | null;
   // Rev284: episode detector fed by the plugin's sampler tick. When
   // present, analyze() runs step-response rules on top of the existing
   // window statistics.
@@ -124,7 +124,7 @@ export class DoctorEngine {
 
   constructor(
     historian: Historian,
-    client: PypilotClient | null,
+    client: PilotLink | null,
     episodes: EpisodeDetector | null = null,
     getPluginState: (() => { rollFfGain: number }) | null = null,
   ) {
@@ -134,7 +134,7 @@ export class DoctorEngine {
     this.getPluginState = getPluginState;
   }
 
-  setClient(client: PypilotClient | null): void { this.client = client; }
+  setClient(client: PilotLink | null): void { this.client = client; }
   setEpisodes(episodes: EpisodeDetector | null): void { this.episodes = episodes; }
   setPluginStateAccessor(fn: (() => { rollFfGain: number }) | null): void { this.getPluginState = fn; }
 

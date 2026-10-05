@@ -9,7 +9,7 @@
 // re-implemented them here on top of our own PypilotClient so we keep a
 // single socket to pypilot_web. See NOTICE + CHANGELOG for attribution.
 
-import { PypilotClient } from "./pypilot-client";
+import { PilotLink } from "./pilot-link";
 import { decideReAnchor } from "./mode-reanchor";
 import {
   computeTackGeometry,
@@ -150,7 +150,7 @@ export class AutopilotProvider {
   private onStageEvent?: (stage: string, event: Record<string, unknown>) => void;
 
   constructor(
-    private client: PypilotClient,
+    private client: PilotLink,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private app: any,
     opts?: {
@@ -669,6 +669,15 @@ export class AutopilotProvider {
         // so an in-flight absolute setTarget cannot silently overwrite
         // the adjusted value from a retry (and vice versa).
         const gen = ++this.targetGen;
+        // Over NMEA 2000, whole degrees go as +-1/+-10 presses: relative,
+        // so they add up in pypilot however quickly the sailor taps.
+        const deltaDeg = Math.round(rad * RAD_TO_DEG * 1000) / 1000;
+        if (Number.isInteger(deltaDeg) && this.client.adjustHeading?.(deltaDeg)) {
+          this.data.target = newRad;
+          this.pendingTarget = { value: newRad, until: Date.now() + TARGET_PENDING_MS };
+          this.notifyChanged("target");
+          return;
+        }
         // Rev254 (Carlos audit): same reject-before-optimistic guard.
         // Rev255: retry with backoff.
         if (!(await this._setWithRetry("ap.heading_command", newRad * RAD_TO_DEG, () => this.targetGen !== gen))) {

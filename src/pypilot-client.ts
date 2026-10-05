@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import { io, Socket } from "socket.io-client";
+import type { PilotLink } from "./pilot-link";
 
 // Protocol note (confirmed from pypilot upstream `web/static/pypilot_control.js`,
 // version bundled with TinyPilot images through 2026):
@@ -61,7 +62,7 @@ export interface PypilotClientOpts {
  *   'pypilot_offline'                          pypilot core reported gone
  *   'pong'            (latencyMs)              ping reply
  */
-export class PypilotClient extends EventEmitter {
+export class PypilotClient extends EventEmitter implements PilotLink {
   private socket: Socket | null = null;
   private opts: Required<PypilotClientOpts>;
   private catalog: PypilotCatalog = {};

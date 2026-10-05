@@ -1,4 +1,6 @@
 import { PypilotClient, PypilotCatalog } from "./pypilot-client";
+import { N2KPypilotClient } from "./n2k-client";
+import { PilotLink } from "./pilot-link";
 import {
   ESSENTIAL_PYPILOT_KEYS,
   RESERVED_PYPILOT_KEYS,
@@ -102,8 +104,12 @@ const WATCH_FOCUS_MAX_KEYS: number = 80;      // per-request key cap
 const WATCH_FOCUS_MAX_GLOBAL_KEYS: number = 200;
 
 interface PluginProps {
+  // how to reach pypilot: pypilot_web over the network, or NMEA 2000
+  connection?: "pypilot_web" | "nmea2000";
   host: string;
   port: number;
+  n2kAddress?: number | null;     // pypilot's N2K address, found automatically if unset
+  n2kRequestsPerSecond?: number;  // cap on PP: requests, each about 20 frames
   reconnectDelayMs?: number;
   allowWrites?: boolean;
   allowDirectServo?: boolean;
@@ -260,7 +266,7 @@ interface PluginProps {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 module.exports = function (app: any) {
-  let client: PypilotClient | null = null;
+  let client: PilotLink | null = null;
   let apProvider: AutopilotProvider | null = null;
   let props: PluginProps = { host: "", port: 80 };
   let lastCatalog: PypilotCatalog = {};
@@ -476,13 +482,38 @@ module.exports = function (app: any) {
 
     schema: () => ({
       type: "object",
-      required: ["host", "port"],
       properties: {
+        connection: {
+          type: "string",
+          title: "Connection to pypilot",
+          description:
+            "pypilot_web over the network, or NMEA 2000 through Signal K's NMEA 2000 connection. " +
+            "NMEA 2000 needs a connection that can transmit, and pypilot's n2k.control set to 'full' " +
+            "(gains, calibration and other settings are written with PP: text commands) and " +
+            "n2k.switch.bank set (+-1/+-10, tack and dodge as switch presses).",
+          enum: ["pypilot_web", "nmea2000"],
+          enumNames: ["pypilot_web (network)", "NMEA 2000"],
+          default: "pypilot_web",
+        },
+        n2kAddress: {
+          type: "number",
+          title: "pypilot NMEA 2000 address (NMEA 2000 only)",
+          description: "Leave empty to find pypilot automatically by its product information.",
+        },
+        n2kRequestsPerSecond: {
+          type: "number",
+          title: "Most PP: requests per second (NMEA 2000 only)",
+          description:
+            "Values pypilot doesn't broadcast are read with PP: text commands, each about 20 frames. " +
+            "12 a second is about 15% of a 250 kbit/s bus. When more is watched than fits, every watch slows down.",
+          default: 12,
+        },
         host: {
           type: "string",
           title: "pypilot_web host",
           description:
-            "IP or hostname of the machine running pypilot_web. Use the SETUP tab of the webapp to scan the LAN.",
+            "IP or hostname of the machine running pypilot_web. Use the SETUP tab of the webapp to scan the LAN. " +
+            "With NMEA 2000, only used for the SSH tools (restart pypilot, log capture).",
           default: "",
         },
         port: {
@@ -626,26 +657,40 @@ module.exports = function (app: any) {
 
     start: (options: PluginProps) => {
       props = normalizeProps(options);
-      if (!props.host) {
+      const n2k = props.connection === "nmea2000";
+      if (!n2k && !props.host) {
         app.setPluginStatus(
           "Not configured - open Plugin Config and set host:port, or use the SETUP tab of the webapp."
         );
         return;
       }
       app.setPluginStatus(
-        `${PLUGIN_REVISION} - connecting to pypilot_web at ${props.host}:${props.port}`
+        n2k
+          ? `${PLUGIN_REVISION} - looking for pypilot on NMEA 2000`
+          : `${PLUGIN_REVISION} - connecting to pypilot_web at ${props.host}:${props.port}`
       );
 
-      client = new PypilotClient({
-        host: props.host,
-        port: props.port,
-        reconnectDelayMs: props.reconnectDelayMs,
-        log: (level, msg) => {
-          if (level === "error") app.error(msg);
-          else if (level === "warn") app.debug(msg);
-          else app.debug(msg);
-        },
-      });
+      const clientLog = (level: "debug" | "info" | "warn" | "error", msg: string) => {
+        if (level === "error") app.error(msg);
+        else app.debug(msg);
+      };
+      if (n2k) {
+        client = new N2KPypilotClient({
+          app,
+          address: props.n2kAddress,
+          maxRequestsPerSecond: props.n2kRequestsPerSecond,
+          catalogCachePath: require("path").join(
+            app.getDataDirPath ? app.getDataDirPath() : ".", "n2k-catalog.json"),
+          log: clientLog,
+        });
+      } else {
+        client = new PypilotClient({
+          host: props.host,
+          port: props.port,
+          reconnectDelayMs: props.reconnectDelayMs,
+          log: clientLog,
+        });
+      }
       // Rev271 (audit R05): propagate the allowWrites gate to the
       // single write path in PypilotClient.set(). Every route to a
       // pypilot write — provider interface, PUT handlers on action
@@ -658,7 +703,7 @@ module.exports = function (app: any) {
         lastDisconnectReason = null;
         disconnectedSinceMs = null;   // Rev100: clear alarm timer.
         app.setPluginStatus(
-          `${PLUGIN_REVISION} - connected to ${props.host}:${props.port}${apProvider ? " (AutopilotProvider active)" : ""}`
+          `${PLUGIN_REVISION} - connected to ${pypilotWhere()}${apProvider ? " (AutopilotProvider active)" : ""}`
         );
       });
 
@@ -693,7 +738,7 @@ module.exports = function (app: any) {
         app.debug("[pypilot-newui] pypilot core back online");
         pushAutopilotUpdate();
         app.setPluginStatus(
-          `${PLUGIN_REVISION} - connected to ${props.host}:${props.port}${apProvider ? " (AutopilotProvider active)" : ""}`
+          `${PLUGIN_REVISION} - connected to ${pypilotWhere()}${apProvider ? " (AutopilotProvider active)" : ""}`
         );
       });
 
@@ -1175,6 +1220,7 @@ module.exports = function (app: any) {
         res.json({
           revision: PLUGIN_REVISION,
           version: PLUGIN_PKG_VERSION,
+          connection: props.connection,
           host: props.host,
           port: props.port,
           connected: client?.connected ?? false,
@@ -1588,8 +1634,11 @@ module.exports = function (app: any) {
         if (!ep || typeof ep !== "object") return res.status(400).json({ error: "enabledPaths object required" });
         props.enabledPaths = ep;
         const settings = {
+          connection: props.connection,
           host: props.host,
           port: props.port,
+          n2kAddress: props.n2kAddress,
+          n2kRequestsPerSecond: props.n2kRequestsPerSecond,
           reconnectDelayMs: props.reconnectDelayMs,
           allowWrites: props.allowWrites,
           allowDirectServo: props.allowDirectServo,
@@ -3364,6 +3413,11 @@ module.exports = function (app: any) {
 
   // ---- helpers ----
 
+  /** where pypilot is, for status messages */
+  function pypilotWhere(): string {
+    return props.connection === "nmea2000" ? "pypilot on NMEA 2000" : `${props.host}:${props.port}`;
+  }
+
   function normalizeProps(options: Partial<PluginProps>): PluginProps {
     // Rev23 migration: infer publishOnlyEssentials for legacy configs so we
     // do not silently stop publishing paths a user already had turned on.
@@ -3380,8 +3434,12 @@ module.exports = function (app: any) {
       poe = true;
     }
     return {
+      connection: options.connection === "nmea2000" ? "nmea2000" : "pypilot_web",
       host: (options.host || "").trim(),
       port: typeof options.port === "number" ? options.port : 80,
+      n2kAddress: typeof options.n2kAddress === "number" ? options.n2kAddress : null,
+      n2kRequestsPerSecond: typeof options.n2kRequestsPerSecond === "number" && options.n2kRequestsPerSecond > 0
+        ? options.n2kRequestsPerSecond : 12,
       reconnectDelayMs:
         typeof options.reconnectDelayMs === "number"
           ? options.reconnectDelayMs
@@ -4801,7 +4859,7 @@ module.exports = function (app: any) {
     void catalog;
     return null;
   }
-  function _applyWatches(c: PypilotClient, catalog: PypilotCatalog): void {
+  function _applyWatches(c: PilotLink, catalog: PypilotCatalog): void {
     const now = Date.now();
     const desired: Record<string, number> = {};
     // Rev251 (audit fix 10): sweep expired entries PER OWNER, and drop
@@ -4845,7 +4903,7 @@ module.exports = function (app: any) {
   // Timer that reruns _applyWatches so expiring focuses actually
   // relax the subscription. Runs every 5 s while the plugin is up.
   let watchSweepTimer: NodeJS.Timeout | null = null;
-  function _startWatchSweep(c: PypilotClient): void {
+  function _startWatchSweep(c: PilotLink): void {
     if (watchSweepTimer) return;
     watchSweepTimer = setInterval(() => {
       try { _applyWatches(c, lastCatalog); } catch { /* silent */ }
@@ -4858,7 +4916,7 @@ module.exports = function (app: any) {
     }
   }
 
-  function setupWatches(c: PypilotClient, catalog: PypilotCatalog): void {
+  function setupWatches(c: PilotLink, catalog: PypilotCatalog): void {
     _lastAppliedWatches = {};
     _applyWatches(c, catalog);
     _startWatchSweep(c);

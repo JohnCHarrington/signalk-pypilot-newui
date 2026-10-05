@@ -235,6 +235,39 @@ pypilot version, restart pypilot_web).
 
 **Webapp URL**: `http://<sk-host>:3000/signalk-pypilot-newui/`
 
+### Connecting over NMEA 2000
+
+Instead of `pypilot_web`, the plugin can reach pypilot over NMEA 2000,
+through Signal K's own NMEA 2000 connection. Set **Connection to pypilot** to
+`NMEA 2000` in Plugin Config. It uses the control schema of pypilot's N2K
+bridge:
+
+- **Primary controls as standard PGNs**: engage, standby and the heading to
+  steer as 126208 commands to 127237; mode changes while engaged, +1/-1/+10/-10,
+  tack and dodge as presses of pypilot's switch bank (127502). Adjustments
+  are relative presses, so they add up however quickly they're tapped.
+- **Everything else as `PP:` text commands** in 126998: reading the values the
+  visor watches, writing gains and settings, and reading the catalog. The
+  catalog is cached in the plugin's data directory, so after the first
+  connection (about 40 s) it's available at once.
+- **State from pypilot's broadcasts**: 127237 and the 127501 switch bank
+  indicators, which only show what pypilot has actually done.
+
+Requirements:
+
+- A Signal K NMEA 2000 connection that can transmit: socketcan
+  (`canbus-canboatjs`), an Actisense NGT-1, or a Yacht Devices gateway in RAW
+  mode.
+- pypilot's `n2k.control` set to `full` (gains, calibration and settings are
+  written with `PP:`), and `n2k.switch.bank` set to an instance no other
+  switching device uses. The plugin reads the bank from pypilot.
+
+Values pypilot doesn't broadcast are polled with `PP:` reads, at most
+**Most PP: requests per second** (default 12, about 15% of a 250 kbit/s
+bus). When the visor watches more than fits, every watch slows down
+rather than any being dropped. The SSH tools (restart, log capture) still
+use the `pypilot_web` host setting.
+
 ## Working alongside `pypilot-autopilot-provider`
 
 We build on top of the excellent

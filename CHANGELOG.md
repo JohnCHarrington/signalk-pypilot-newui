@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — NMEA 2000 connection
+
+### Added
+
+- **Connection to pypilot over NMEA 2000** (Plugin Config → Connection to
+  pypilot). Primary controls go as standard PGNs (126208 to 127237, and
+  127502 presses of pypilot's switch bank); every other value is read and
+  written with `PP:` text commands, rate limited, with the catalog cached
+  between runs. The AutopilotProvider sends whole-degree adjustments as
+  relative presses. See the README's *Connecting over NMEA 2000*.
+
 ## 2.11.0 — 2026-09-30 — Sea-trial Sprint K fixes + severity override + portrait layout
 
 Rolls up Rev324 through Rev376. Between 2.10.0 (Rev323) and 2.11.0 the
